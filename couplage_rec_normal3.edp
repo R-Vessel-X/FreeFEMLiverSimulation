@@ -3,7 +3,6 @@ int gamma=3, i;
 
 
 // Define mesh boundary
-//Lobule
 border DD(t=-a, a){x=t; y=-b; label=1;}; //DD: Down boundary Darcy
 border RD(t=-b, 0){x=a; y=t; label=2;};  //RD: Right boundary Darcy
 border IF(t=-a, a){x=t; y=0; label=gamma;}; //IF: Interface
@@ -42,9 +41,11 @@ XhS u1, u2, v1, v2, h1, h2, Q, Vo, Vint, Uint;
 
 
 
-
+//Macros
 macro Grad2(u1,u2) [dx(u1), dy(u1), dx(u2),dy(u2)]// //Gradient of vector
 macro Div2(u,v) (dx(u) + dy(v))// //Divergence of vector
+
+macro Grad1(pD) [dx(pD) , dy(pD)] // //Gradient of a scalar
 
 macro gap(u1,u2) 2*mu*Grad2(u1,u2)[3]// //pressure gap at the interface
 macro uif(u1,u2) (sqrt(k*mu)/alpha)*(dy(u1)+dx(u2))//
@@ -52,7 +53,7 @@ macro pf1(u1,u2) (pD+gap(u1,u2))//
 macro U1gn1(u1,u2) (((u1*N.y)*(alpha/sqrt(k*mu))-(dx(u2)-dy(u1))*N.y)/2)//  //For BJS coupling condition with Neumann
 macro U1gn2(u1,u2) (((-u2*N.x)*(alpha/sqrt(k*mu))-(dx(u2)-dy(u1))*N.x)/2)//  //For BJS coupling condition with Neumann
 
- 
+//Fields 
 XhS v0s=v0*(1-((2*y-b)/b)^2); //Inlet velocity field
 XhS v0D=0.78*v0*(1-y);
 XhS v2S=-0.1*x;
@@ -61,10 +62,6 @@ XhS v2S=-0.1*x;
 
 // Define a function f
 func f= 0;
-
-//Macros
-macro Grad1(pD) [dx(pD) , dy(pD)] // //Gradient of a scalar
-
 
 //Stokes
 problem Stokes ([u1, u2, pS], [v1, v2, qS], init=i)
@@ -106,28 +103,6 @@ problem Darcy1([uD1,uD2,pD], [vD1,vD2,qD], init=i, solver=sparsesolver)
 	;
 
 real cpu=clock();
-
-
-// real TESTu2, TESTP, Err;
-// while(1){
-// Darcy1;
-// v2S=uD2;
-// Stokes;
-// pDint=pS-gap(u1,u2);
-
-
-// plot(uD2, u2, fill=true, wait=true, value=true);
-// TESTu2 = int1d (ThD, gamma) (u2-uD2);
-// TESTP  = int1d (ThD, gamma) (pS-pD-gap(u1,u2));
-
-// cout << "Err u2 = " << TESTu2 << endl;
-// cout << "Err P = " << TESTP << endl;
-
-// Err=abs(TESTu2+TESTP);
-// if(Err<10) break;
-// }
-
-
 Stokes;
 Darcy1;
 
