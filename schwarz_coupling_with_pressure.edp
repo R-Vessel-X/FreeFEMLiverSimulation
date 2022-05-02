@@ -1,0 +1,147 @@
+real a=4, b=1, nbe=40, rap=2*a/b, v0=1000, k=10, mu=1, alpha=1, vm=v0*2/3, TEST, TEST1, TEST2, TEST3, m=0;
+int gamma=3, i;
+
+
+
+// Define mesh boundary
+//Lobule
+border DD(t=-a, a){x=t; y=-b; label=1;}; //DD: Down boundary Darcy
+border RD(t=-b, 0){x=a; y=t; label=2;};  //RD: Right boundary Darcy
+border IF(t=-a, a){x=t; y=0; label=gamma;}; //IF: Interface
+border LD(t=0, -b){x=-a; y=t; label=4;};  //LD: Left boundary Darcy
+border RS(t=0, b){x=a; y=t; label=5;};    //RS: Right boundary Stokes
+border US(t=a, -a){x=t; y=b; label=6;};   //US: Upper boundary Stokes
+border LS(t=b, 0){x=-a; y=t; label=7;};   //LS: Left boundary Stokes
+
+
+
+
+//Contours
+
+plot(DD(nbe)+RD(nbe/rap)+IF(nbe)+LD(nbe/rap)+RS(nbe/rap)+US(nbe)+LS(nbe/rap), wait=true);
+
+
+//Mesh
+mesh ThD = buildmesh(DD(nbe)+RD(nbe/rap)+IF(-nbe)+LD(nbe/rap)); //Porous domain
+mesh ThS = buildmesh(RS(nbe/rap)+US(nbe)+LS(nbe/rap)+IF(nbe));  //Free flow domain
+
+plot(ThS,ThD, wait=true); //plot Th then press Enter
+
+
+//FESpaces
+fespace VhD(ThD, P1); //Darcy space P1 for pressure
+fespace XhD(ThD, P2); //Darcy space P2 for velocity
+VhD pD, qD; 
+XhD uD1, uD2, vD1, vD2;
+
+
+fespace VhS(ThS, P1); //P1 Stokes space for pressure
+fespace XhS(ThS, P2); //P2 Stokes space for velocity
+VhS pS, qS, lambda; //lambda is the loop variable
+VhS H, p=0;
+XhS u1, u2, v1, v2, Uint;
+
+
+
+// Macros 
+macro Grad2(u1,u2) [dx(u1), dy(u1), dx(u2),dy(u2)]// //Gradient of vector
+macro Div2(u,v) (dx(u) + dy(v))//Divergence of vector
+
+macro Grad1(pD) [dx(pD) , dy(pD)] //Gradient of a scalar
+
+macro gap(u1,u2) 2*mu*Grad2(u1,u2)[3]// //pressure gap at the interface
+macro uif(u1,u2) (sqrt(k*mu)/alpha)*(dy(u1)+dx(u2))// 
+macro pf1(u1,u2) (pD+gap(u1,u2))//
+macro U1gn1(u1,u2) (((u1*N.y)*(alpha/sqrt(k*mu))-(dx(u2)-dy(u1))*N.y)/2)//  //For BJS coupling condition with Neumann
+macro U1gn2(u1,u2) (((-u2*N.x)*(alpha/sqrt(k*mu))-(dx(u2)-dy(u1))*N.x)/2)//  //For BJS coupling condition with Neumann
+
+
+XhS v0s=v0*(1-((2*y-b)/b)^2); //Inlet velocity field
+
+
+
+// Define a function f
+func f= 0;
+
+//Let pD and pS be the pressures of Darcy and Stokes respectively. Let qS be the test function for Stokes EDP related to pS.
+//The schwarz conjugate gradient method consist on minimizing the quantity lambda=int1d((pS-(pD+gap(u1,u2))*qS) at the interface
+
+//Stokes
+problem Stokes ([u1, u2, pS], [v1, v2, qS], init=i)
+     = int2d(ThS)(
+         mu*(
+             Grad2(u1,u2)'*Grad2(v1,v2)
+         )
+         -pS*Div2(v1,v2)
+		 -qS*Div2(u1,u2)
+		 - (pS*qS*1e-10)
+		 )
+	 -int1d(ThS, gamma)(mu*(U1gn1(u1,u2)*v1+U1gn2(u1,u2)*v2)) //BJS condition
+	 +int2d(ThS)(-qS) //first integral to implement the schwarz method
+	 +int1d(ThS,gamma)(-lambda*qS) //first integral to implement the schwarz method
+	 + on(LS,  u1=v0s, u2=0)//flow in the stokes inlet
+	 + on(US,   u2=0)//slip condition in the stokes upper boundary
+	 ;
+
+problem Darcy1([uD1,uD2,pD], [vD1,vD2,qD], init=i)
+	 = int2d(ThD)( // The bilinear part
+	 -k*(pD*Div2(vD1,vD2))
+	 +uD1*vD1+uD2*vD2
+	 -qD*Div2(uD1,uD2)
+	 -(pD*qD*1e-10)
+	)
+	+ int2d(ThD)(-qD) //first integral to implement the schwarz method
+	+ int1d(ThD, gamma)(-lambda*qD) //first integral to implement the schwarz method
+	+ on(RD,  uD1=0)//slip condition for all Darcy boundaries except for gamma
+	+ on(LD,  uD1=0)
+	+ on(DD,  uD2=0)
+	//+ on(gamma,  uD2=u2)
+	;
+	
+//Schwarz method
+varf b1(p, q, solver=CG) = int1d(ThS, gamma)(p*q); 
+matrix B = b1(VhS, VhS, solver=CG);
+
+//Schwarz loop
+func real[int] BoundaryProblem (real[int] &l){
+lambda[] = l; //make FE function form l
+Stokes;
+Darcy1;
+i++; //no refactorization i != 0
+qS = -(pS-(pD+gap(u1,u2))); //Difference of the two fields
+cout << "ress" << qS(0,0) << endl; //Difference of field at the center of the interface
+lambda[] = B*qS[];
+cout << "lambda" << lambda(0,0) << endl; //Difference of schwarz function at the center of the interface
+plot(pS, pD, wait=false ); //verify the continuity of pressure at interface
+return lambda[];
+}
+
+// Solve
+real cpu=clock();
+LinearCG(BoundaryProblem, p[], eps=1.e-6, nbiter=200);
+BoundaryProblem(p[]); //solve again to have right uD2, u2
+
+//Graphs
+
+plot(u2, uD2, wait=true );
+// Display & Plot
+cout << " -- CPU time schwarz-gc:" << clock()-cpu << endl;
+plot([u1,u2], [uD1,uD2], wait=true );
+
+int n = 120;
+ real[int] xx(120), yy(120), zz(120), ww(120), yyy(120),zzz(120), www(120);
+ for (int i = 0; i < n; i++){
+     x = 2*a*(i/real(n))-a;
+     y = 0;
+     xx[i] = x;
+     yy[i] = u2/v0; // Value of uh at point (i/10., i/10.)
+	 yyy[i] = uD2/v0; // Value of uh at point (i/10., i/10.)
+	 zz[i]=pS;
+	 ww[i]=gap(u1,u2)+pD;
+	 zzz[i]=u1;
+	 www[i]=Uint;
+ }
+ plot([xx, yy],[xx, yyy], wait=true, value=true);
+ plot([xx, zz],[xx, ww], wait=true, value=true);
+ 
+ plot(pS, pD, wait=false, fill=true );
