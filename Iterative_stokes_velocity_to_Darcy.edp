@@ -1,0 +1,174 @@
+real a=4, b=1, nbe=80, rap=2*a/b, v0=1000, k=0.1, mu=1, alpha=1, vm=v0*2/3, TEST, TEST1, TEST2, TEST3, m=0;
+int gamma=3, i;
+
+
+// Define mesh boundary
+//Lobule
+border DD(t=-a, a){x=t; y=-b; label=1;}; //DD: Down boundary Darcy
+border RD(t=-b, 0){x=a; y=t; label=2;};  //RD: Right boundary Darcy
+border IF(t=-a, a){x=t; y=0; label=gamma;}; //IF: Interface
+border LD(t=0, -b){x=-a; y=t; label=4;};  //LD: Left boundary Darcy
+border RS(t=0, b){x=a; y=t; label=5;};    //RS: Right boundary Stokes
+border US(t=a, -a){x=t; y=b; label=6;};   //US: Upper boundary Stokes
+border LS(t=b, 0){x=-a; y=t; label=7;};   //LS: Left boundary Stokes
+
+
+
+
+//Contours
+
+plot(DD(nbe)+RD(nbe/rap)+IF(nbe)+LD(nbe/rap)+RS(nbe/rap)+US(nbe)+LS(nbe/rap), wait=true);
+
+
+//Mesh
+mesh ThD = buildmesh(DD(nbe)+RD(nbe/rap)+IF(-nbe)+LD(nbe/rap)); //Porous domain
+mesh ThS = buildmesh(RS(nbe/rap)+US(nbe)+LS(nbe/rap)+IF(nbe));  //Free flow domain
+
+plot(ThS,ThD, wait=true); //plot Th then press Enter
+
+
+//FESpaces
+fespace VhD(ThD, P1); //Darcy space P1 for pressure
+fespace XhD(ThD, P2); //Darcy space P2 for velocity
+VhD pD, qD;
+XhD uD1, uD2, vD1, vD2, uDint; 
+
+
+fespace VhS(ThS, P1); //P1 Stokes space for pressure
+fespace XhS(ThS, P2); //P2 Stokes space for velocity
+VhS pS, qS, pSint=-100*x; //pSint: initial iteration applied stokes pressure at the interface
+XhS u1, u2, v1, v2, h1, h2, Q, Vo, Vint, Uint;
+
+
+
+//Macros
+macro Grad2(u1,u2) [dx(u1), dy(u1), dx(u2),dy(u2)]// //Gradient of vector
+macro Div2(u,v) (dx(u) + dy(v))// //Divergence of vector
+
+macro Grad1(pD) [dx(pD) , dy(pD)] // //Gradient of a scalar
+
+macro gap(u1,u2) 2*mu*Grad2(u1,u2)[3]// //pressure gap at the interface
+macro uif(u1,u2) (sqrt(k*mu)/alpha)*(dy(u1)+dx(u2)) // Verification term of BJS condition
+macro pf1(u1,u2) (pD+gap(u1,u2))//Verification term of pressure continuity at the interface
+macro U1gn1(u1,u2) (((u1*N.y)*(alpha/sqrt(k*mu))-(dx(u2)-dy(u1))*N.y)/2)//For BJS coupling condition with Neumann
+macro U1gn2(u1,u2) (((-u2*N.x)*(alpha/sqrt(k*mu))-((dx(u2)-dy(u1))*N.x))/2)//For BJS coupling condition with Neumann
+
+ 
+XhS v0s=v0*(1-((2*y-b)/b)^2); //Inlet stokes velocity field
+XhS v2S=-v0*x; //initial iteration applied stokes velocity
+
+
+
+// Define a function f
+func f= 0;
+
+
+
+//Stokes
+problem Stokes ([u1, u2, pS], [v1, v2, qS], init=i)
+     = int2d(ThS)(
+         mu*(
+             Grad2(u1,u2)'*Grad2(v1,v2)
+         )
+         -pS*Div2(v1,v2)
+		 -qS*Div2(u1,u2)
+		 - (pS*qS*1e-10)
+		 )
+	 -int1d(ThS, gamma)(mu*(U1gn1(u1,u2)*v1+U1gn2(u1,u2)*v2)) //BJS condition
+	 + on(LS,  u1=v0s, u2=0) //intlet Stokes flow
+	 + on(US,   u2=0) //slip condition at Stokes upper boundary
+	 + on(gamma,   pS=pSint)//pressure from Darcy to stokes
+	 ;
+
+problem Darcy1([uD1,uD2,pD], [vD1,vD2,qD], init=i, solver=sparsesolver)
+	 = int2d(ThD)( // The bilinear part
+	 -k*(pD*Div2(vD1,vD2))
+	 +uD1*vD1+uD2*vD2
+	 -qD*Div2(uD1,uD2)
+	 -(pD*qD*1e-10)
+	)
+	+ on(RD,  uD1=0)//slip condition for all Darcy boundaries except gamma
+	+ on(LD,  uD1=0)
+	+ on(DD,  uD2=0)
+	+ on(gamma,  uD2=uDint)//normal velocity from stokes to Darcy
+	;
+
+real cpu=clock();
+
+//Loop: 1-compute Stokes with initial interface pressure and get stokes normal velocity; 2-inject interface Stokes velocity in Darcy interface and get Darcy pressure
+//3-inject Darcy pressure in stokes interface 4-repeat until break condition
+real TESTu2, TESTP, Err; //Error variables
+while(1){
+
+Stokes;
+uDint=u2; //Apply Darcy interface normal velocity computed from stokes result
+Darcy1;
+pSint=pD+gap(u1,u2); //Apply stokes interface pressure computed from Darcy result
+
+
+
+plot(uD2, u2, fill=false, wait=false, value=true);
+TESTu2 = int1d (ThD, gamma) (u2-uD2); //Compute normal velocity difference at gamma
+TESTP  = int1d (ThD, gamma) (pS-pD-gap(u1,u2)); //Compute pressure difference at gamma
+
+cout << "Err u2 = " << TESTu2 << endl; //Show normal velocity difference
+cout << "Err P = " << TESTP << endl; //Show pressure difference 
+
+ Err=max(abs(TESTu2),abs(TESTP)); //Compute the maximal error
+ if(Err<10){ //Convergence Break condition
+	cout << "Converged :)) with err = " << Err << endl;
+	break;
+ }
+ if(Err>10e50){ //Divergence Break condition
+	cout << "Diverged :(( with err = " << Err << endl;
+	break;
+ }
+	//Show normal velocity difference break; 
+ }
+
+
+Uint=uif(u1,u2);
+
+//Verification tests
+real TESTus  = int2d (ThS) (Div2(u1,u2)); //Div(vs) test
+real TESTud  = int2d (ThD) (Div2(uD1,uD2)); //Div(vd) test
+real TESTuint  = int1d (ThD,gamma) (uD2); //Gamma v2 flux test
+real TESTutan  = int1d (ThS, gamma) (sqrt((u1-Uint)^2)); //BJS condition test
+
+cout << "div(us) = " << TESTus << endl;
+cout << "div(ud) = " << TESTud << endl;
+cout << "uint = " << TESTuint << endl;
+cout << "utan = " << TESTutan << endl;
+
+//Plots
+plot([u1,u2], [uD1,uD2], wait=true);
+int n = 120;
+ real[int] xx(120), yy(120), zz(120), ww(120), yyy(120),zzz(120), www(120);
+ for (int i = 0; i < n; i++){
+     x = 2*a*(i/real(n))-a; // Value of uh at point (i/10., i/10.)
+     y = 0; // coupling interface y coordinate
+     xx[i] = x;
+     yy[i] = u2/v0;   // Normalized stokes interface normal velocity 
+	 yyy[i] = uD2/v0; // Normalized Darcy interface normal velocity 
+	 zz[i]=pS;        // stokes pressure 
+	 ww[i]=gap(u1,u2)+pD;  // Darcy pressure + pressure gap at gamma
+	 zzz[i]=u1;            // Darcy interface tangent velocity
+	 www[i]=Uint;         // Darcy interface normal velocity
+ }
+ plot([xx, yy],[xx, yyy], wait=true, value=true);
+ plot([xx, zz],[xx, ww], wait=true, value=true);
+ plot([xx, zzz],[xx, www], wait=true, value=true);
+ cout << "u2min = " << (u2[].min)/v0 << endl;
+ 
+ {// file for gnuplot
+ ofstream gnu("plot4.gp");
+ for (int i = 0; i < n; i++)
+ gnu << xx[i] << " " << yy[i] << endl;
+ }
+ 
+ {// file for gnuplot
+ ofstream gnu("plotu1.gp");
+ for (int i = 0; i < n; i++)
+ gnu << xx[i] << "   " << zzz[i] << "   " << www[i] << endl;
+ }
+
