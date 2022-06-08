@@ -1,0 +1,147 @@
+//load "MUMPS"
+load "iovtk"
+
+real a=4, b=1, nbe=16, rap=2*a/b, v0=10, pf=10, Kappa=1, mu=1, alpha=1, vm=v0*2/3;
+int gamma=3, i;
+
+
+// Define mesh boundary
+//Lobule
+
+// border DD(t=-a, a){x=t; y=-b; label=1;}; //DD: Down Darcy
+// border RD(t=-b, 0){x=a; y=t; label=2;};
+// border IF(t=-a, a){x=t; y=0; label=gamma;}; //IF: Interface
+// border LD(t=0, -b){x=-a; y=t; label=4;};
+// border RS(t=0, b){x=a; y=t; label=5;};
+// border US(t=a, -a){x=t; y=b; label=6;};
+// border LS(t=b, 0){x=-a; y=t; label=7;};
+
+
+// //Contours
+
+// mesh Th=buildmesh(DD(nbe)+RD( nbe/rap)+IF(nbe)+LD(nbe/rap)+RS(nbe/rap)+US(nbe)+LS(nbe/rap));
+
+// int St = Th(0, 0.5).region, Da= Th(0, -0.5).region;
+// mesh Th1=trunc(Th, region==St);
+// mesh Th2=trunc(Th, region==Da);
+
+// plot(Th1,wait=1);
+// plot(Th2,wait=1);
+// plot(Th,wait=1);
+
+int[int] labs1=[10,11,12,13], labs2=[20,21,10,23];
+
+mesh Th1=square(nbe,nbe/8,[-4+8*x,y], label=labs1, region=0);
+mesh Th2=square(nbe,nbe/8,[-4+8*x,-1+y], label=labs2, region=1);
+
+plot(Th1,Th2,wait=1);
+//plot(Th2,wait=1);
+
+
+fespace Lh1(Th1,P1);
+fespace Qh1(Th1,P2);
+Lh1 p1,q1;
+Qh1 u1x, u1y, v1x, v1y,H;
+
+fespace Lh2(Th2,P1);
+fespace Qh2(Th2,P2);
+Lh2 p2,q2;
+Qh2 u2x, u2y, v2x, v2y, QC=0, QC1;
+
+// Macro
+macro grad(A) [dx(A), dy(A)] //
+macro Grad(A) [grad(A#x), grad(A#y)] //
+macro Grad2(u1,u2) [dx(u1), dy(u1), dx(u2),dy(u2)]//
+macro Div2(u1,u2) (dx(u1) + dy(u2))//
+macro Div(A) (dx(A#x) + dy(A#y)) //
+macro Dg(A)  [[dx(A#x) , 0.5*(dy(A#x)+dx(A#y))],[0.5*(dy(A#x)+dx(A#y)), dy(A#y)]] //
+macro ID(A)  [[A , 0],[0, A]] //
+macro Sg(A,p)  mu*Dg(A)-ID(p) //
+
+//int[int] TIF1=[1,0],TIF2=[-1,0],NIF1=[0,-1],NIF2=[0,1];
+
+
+func v0s=v0*(1-((2*y-b)/b)^2);
+func v1s=7-(y*7);
+
+problem Stokes([u1x,u1y,p1],[v1x,v1y,q1])
+=  int2d(Th1)(mu*(Grad(u1):Grad(v1)))
+   +int2d(Th1)(p1*Div(v1))
+   +int2d(Th1)(q1*Div(u1))
+   -int2d(Th1)(1e-10*p1*q1)
+   +int2d(Th1,10)((alpha/sqrt(Kappa))*u1x*v1x)
+   -int1d(Th1,10)(p2*[v1x,v1y]'*[N.x,N.y])
+ + on(13,u1x=v0s,u1y=0)
+ + on(12,u1x=0,u1y=0)
+ + on(11,u1x=vm)
+;
+
+problem Darcy([u2x,u2y,p2],[v2x,v2y,q2])
+=  int2d(Th2)(mu*([u2x,u2y]'*[v2x,v2y]))
+   //+int2d(Th2)(Kappa*grad(p2)'*[v2x,v2y])
+   +int2d(Th2)(q2*Div(u2))
+   +int2d(Th2)(Kappa*Div(v2)*p2)
+   -int2d(Th2)(1e-4*p2*q2)
+ + on(23,21, u2x=0)
+ + on(20, u2y=0)
+ + on(10,u2y=QC)
+;
+
+
+i=0;
+real STEPRes, MODRes;
+while(1){
+	
+	Darcy;
+	Stokes;
+	QC1=0.75*QC+0.25*u1y;
+	STEPRes=int1d(Th2,10)(sqrt((QC1-QC)^2));
+	MODRes=int1d(Th2,10)(sqrt(((u1y-u2y)/u1y)^2));
+	cout << "Step = " << i << endl;
+	cout << "STEPRes = " << STEPRes << endl;
+	cout << "MODRes = " << MODRes << endl;
+	plot(u1y,u2y, fill=1, wait=0, value=true);
+	if (STEPRes<1e-3 || STEPRes>1e20 || MODRes<1e-3) {break;}
+	else {
+		 i=i+1;
+	     QC=QC1;
+		 }
+}
+	
+	
+real[int] colorhsv=[ // color hsv model
+    4./6., 1 , 0.5, // dark blue
+    4./6., 1 , 1, // blue
+    5./6., 1 , 1, // magenta
+    1, 1. , 1, // red
+    1, 0.5 , 1 // light red
+    ];	
+
+plot([u1x,u1y],[u2x,u2y], fill=false, wait=true, value=true,coef=0.05, hsv=colorhsv);
+plot(p1,p2, fill=true, wait=true, value=true);
+
+real IUD1  = int2d (Th2) (Div(u2));
+real IUS1  = int2d (Th1) (Div(u1));
+//real diff=abs(IUD1-IUS1);
+cout << "Div(u1) = " << IUS1 << endl;
+cout << "Div(u2) = " << IUD1 << endl;
+
+
+int n = 120;
+ real[int] xx(120), yy(120), zz(120), ww(120), yyy(120);
+ for (int i = 0; i < n; i++){
+     x = 2*a*(i/real(n))-a;
+     y = 0;
+     xx[i] = x;
+     yy[i] = u2y/v0; // Value of uh at point (i/10., i/10.)
+	 yyy[i] = u1y/v0; // Value of uh at point (i/10., i/10.)
+	 //zz[i]=p1;
+	 //ww[i]=gap(u1,u2)+pD;
+ }
+ plot([xx, yy],[xx, yyy], wait=true, value=true);
+ 
+ {// file for gnuplot
+ ofstream gnu("plot4.gp");
+ for (int i = 0; i < n; i++)
+ gnu << xx[i] << " " << yyy[i] << endl;
+ }
