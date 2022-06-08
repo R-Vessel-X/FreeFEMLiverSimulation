@@ -1,0 +1,258 @@
+//load "MUMPS"
+load "iovtk"
+
+verbosity = 0;
+
+// Parameters
+
+
+real D = 0.1;
+real H = 1;//0.41;//
+real L = 1; //2.2;//
+real l = 2.5;//2; //2.2;//
+int nn = 10;
+real x0= 0.5;
+real nu = 1.;
+real Kappa = 1.;
+real mu = 1.;
+real alpha = 1.;
+int nbe=20;
+// Mesh
+//2 carres
+// border fr1(t=0, x0){x=t; y=0; label=11;}
+// border fr2(t=0, H){x=x0; y=t; label=5;}
+// border fr3(t=x0,0){x=t; y=H; label=13;}
+// border fr41(t=H,0){x=0; y=t; label=12;}
+// border fr11(t=x0, L){x=t; y=0; label=21;}
+// border fr21(t=0, H){x=L; y=t; label=22;}
+// border fr31(t=L, x0){x=t; y=H; label=23;}
+// border fr42(t=H, 0){x=x0; y=t; label=5;}
+// //Rectangle + puits et source
+
+// mesh Th = buildmesh(fr11(nn) + fr21(2*nn) + fr31(nn) +fr1(nn) + fr2(2*nn) + fr3(nn) + fr41(2*nn));
+
+// int St = Th(0.25, 0.5).region, Da= Th(0.75, 0.5).region;
+// mesh Th1=trunc(Th, region==St);
+// mesh Th2=trunc(Th, region==Da);
+
+int[int] labs1=[11,5,13,12], labs2=[21,22,23,5];
+
+mesh Th1=square(nbe/2,nbe,[0.5*x,y], label=labs1, region=0);
+mesh Th2=square(nbe/2,nbe,[0.5+0.5*x,y], label=labs2, region=1);
+mesh Th=Th1+Th2;
+
+int St=0, Da=1;
+plot(Th1,wait=1);
+plot(Th2,wait=1);
+//plot(Th,wait=1);
+
+// Fespace
+func PkU = P2;
+func PkP = P1;
+fespace Uh1(Th1, [PkU, PkU, PkP]);
+fespace Uh2(Th2, [PkU, PkU, PkP]);
+fespace Uh(Th, [PkU, PkU, PkP]);
+//Uh1 [u1x, u1y, p1];
+//Uh2 [u2x, u2y, p2];
+//Uh1 [v1x, v1y, q1];
+//Uh2 [v2x, v2y, q2];
+Uh [ux, uy, p];
+
+
+fespace Lh1(Th1,P1);
+fespace Qh1(Th1,P2);
+Lh1 ph1ex, p1, q1;
+Qh1 u1xh, u1yh, u1x,u1y, v1x ,v1y, QC=0, QC1;
+
+fespace Lh2(Th2,P1);
+fespace Qh2(Th2,P2);
+Lh2 ph2ex, p2, q2;
+Qh2 u2xh, u2yh, u2x,u2y, v2x, v2y;
+
+//fespace Vh(Th, P2);
+//fespace Qh(Th, P1);
+//fespace Ph(Th, P0);
+//Ph Sc=(region==St),Dc=(region==Da), Tc;
+//Vh pp,q,ffx,ffy,li;
+//Vh u1x,u1y,u2x,u2y,QC,QC1;
+//Vh v1x,v1y,v2x,v2y;
+//Qh p1,p2,q1,q2;
+// Macro
+macro grad(A) [dx(A), dy(A)] //
+macro Grad(A) [grad(A#x), grad(A#y)] //
+macro Div(A) (dx(A#x) + dy(A#y)) //
+macro Dg(A)  [[dx(A#x) , 0.5*(dy(A#x)+dx(A#y))],[0.5*(dy(A#x)+dx(A#y)), dy(A#y)]] //
+macro Dg1(A)  0.5*(Grad(A)'+Grad(A)) //
+ 
+
+
+
+func u1xex = y^4*exp(x)     *(region==St) + 0*(region==Da);
+func u1yex = exp(y)*cos(2*x)*(region==St) + 0*(region==Da);
+func p1ex = -y^4*exp(x)     *(region==St) + 0*(region==Da);
+func divu1 = (y^4*exp(x)+cos(2*x)*exp(y))*(region==St) + 0*(region==Da);
+//func f1x = (-mu*(12*y^2+y^4)*exp(x)-y^4*exp(x))*(region==St)+ 0*(region==Da);
+func f1x = -((2*mu+1)*exp(x)*y^4+2*mu*(6*y^2*exp(x)-exp(y)*sin(2*x)))*(region==St)+ 0*(region==Da);
+//func f1y =  mu*(3*exp(y)*cos(2*x) - 4*y^3*exp(x))*(region==St)+ 0*(region==Da);
+func f1y =  -(4*(mu+1)*y^3*exp(x)-2*mu*exp(y)*cos(2*x))*(region==St)+ 0*(region==Da);
+
+func u2xex = y^4*exp(x)  *(region==Da)+0*(region==St)  ;
+func u2yex = 4*y^3*exp(x)*(region==Da)+0*(region==St) ;
+func p2ex =  - y^4*exp(x)  *(region==Da)+0*(region==St) ;
+func divu2 = ((y^4+12*y^2)*exp(x))*(region==Da)+0*(region==St);
+func f2   =  mu*(12*y^2+y^4)*exp(x)*(region==Da)+0*(region==St);
+
+//Ph f1xh=f1x,f1yh=f1y, f2h=f2, divu1h=divu1,divu2h=divu2;
+
+
+//plot (Th,Sc, fill=1, value=1, cmm="Sc",wait=1);
+//plot (Th,Dc, fill=1, value=1, cmm="Sc",wait=1);
+
+//u2x=0.0;
+//u2y=0.0;
+//p2=0.0;
+// Problem
+Uh1 [u1hx, u1hy, ph1];
+Uh1 [v1hx, v1hy, qh1];
+solve Stokes([u1hx,u1hy,ph1],[v1hx,v1hy,qh1])
+= int2d(Th1)( 2*mu*(Dg(u1h): Dg(v1h))
+			  +Div(v1h)*ph1
+			  +Div(u1h)*qh1
+			  //+grad(qh1)'*[u1hx,u1hy]
+			)
+ - int2d(Th1)(f1x*v1hx + f1y*v1hy)
+ - int2d(Th1)(divu1*qh1)
+ + int2d(Th1)(2*1e-5*ph1*qh1)
+ + on(11,12,13,5,u1hx=u1xex,u1hy=u1yex)
+ //+ on(5,ph1=p1ex)
+;
+//
+plot(Th1,[u1hx, u1hy], coef = 0.6, value=1, cmm="Vitesse Stokes",wait=1);
+u1xh=u1xex;
+u1yh=u1yex;
+plot(Th1,[u1xh, u1yh], coef = 0.6, value=1, cmm="Vitesse Exacte Stokes",wait=1);
+plot(Th1,ph1, nbiso = 10, fill=1, value=1, cmm="Pression Stokes",wait=1);
+ph1ex=p1ex;
+plot(Th1,ph1ex, nbiso = 10, fill=1, value=1, cmm="Pression Exacte Stokes", wait=1);
+
+
+//cout << "u1h = " << Grad(u1h) << endl;
+Uh2 [u2hx, u2hy, ph2];
+Uh2 [v2hx, v2hy, qh2];
+
+
+solve Darcy([u2hx,u2hy,ph2],[v2hx,v2hy,qh2])
+= int2d(Th2)( mu * (u2hx*v2hx+u2hy*v2hy)
+            + Kappa * (dx(ph2)*v2hx+dy(ph2)*v2hy)
+            //- (u2hx*dx(qh2)+u2hy*dy(qh2)))
+			+(Div(u2h)*qh2))
+ - int2d(Th2)(f2*qh2)
+ //+ int2d(Th2)(Div(u2h)*qh2)
+ //+ on(5,23,21,22,ph2=p2ex)
+ + int2d(Th2)(2*1e-6*ph2*qh2)
+ + on(23,21,22,5,u2hx=u2xex,u2hy=u2yex)
+ //+ on(5,23,21,22,ph2=p2ex)
+;
+
+
+plot(Th2,[u2hx, u2hy], coef = 0.6, value=1, cmm="Vitesse Darcy",wait=1);
+u2xh=u2xex;
+u2yh=u2yex;
+plot(Th2,[u2xh, u2yh], coef = 0.6, value=1, cmm="Vitesse Exacte Darcy",wait=1);
+plot(Th2,ph2, nbiso = 10, fill=1, value=1, cmm="Pression Darcy",wait=1);
+ph2ex=p2ex;
+plot(Th2,ph2ex, nbiso = 10, fill=1, value=1, cmm="Pression Exacte Darcy", wait=1);
+
+problem StokesC([u1x,u1y,p1],[v1x,v1y,q1])
+=  int2d(Th1)(2*mu*(Dg(u1):Dg(v1)))
+   +int2d(Th1)(p1*Div(v1))
+   +int2d(Th1)(q1*Div(u1))
+   - int2d(Th1)(f1x*v1x + f1y*v1y)
+   - int2d(Th1)(divu1*q1)
+   //-int2d(Th1)(2*1e-5*p1*q1)
+   +int2d(Th1,5)((alpha/sqrt(Kappa))*u1y*v1y)
+   -int1d(Th1,5)(p2*[v1x,v1y]'*[N.x,N.y])
+ + on(11,12,13,u1x=u1xex,u1y=u1yex)
+;
+
+
+QC=u2xex;
+
+problem DarcyC([u2x,u2y,p2],[v2x,v2y,q2])
+=  int2d(Th2)(mu*(u2x*v2x+u2y*v2y))
+   -int2d(Th2)(Kappa*p2*Div(v2))
+   +int2d(Th2)(q2*Div(u2))
+   -int2d(Th2)(1e-3*p2*q2)
+   -int2d(Th2)(f2*q2)
+ //+ on(23,21,22,p2=p2ex)
+ + on(22,21,23,u2x=u2xex,u2y=u2yex)
+ + on(5,u2x=QC)
+;
+
+
+int i=0;
+real STEPRes, MODRes;
+while(1){
+	
+	DarcyC;
+	StokesC;
+	QC1=0.8*QC+0.2*u1x;
+	STEPRes=int1d(Th2,5)(sqrt((QC1-QC)^2));
+	MODRes=int1d(Th1,5)(sqrt(((u1x-u2x)/u2x)^2));
+	cout << "Step = " << i << endl;
+	cout << "STEPRes = " << STEPRes << endl;
+	cout << "MODRes = " << MODRes << endl;
+	plot([u1x,u1y],[u2x,u2y], fill=0, wait=true, value=true);
+	//plot(p2, fill=1, wait=true, value=true);
+	if (STEPRes<1e-3 || STEPRes>1e20 || MODRes<1e-3) {break;}
+	else {
+		 i=i+1;
+	     QC=QC1;
+		 }
+}
+
+
+real[int] colorhsv=[ // color hsv model
+    4./6., 1 , 0.5, // dark blue
+    4./6., 1 , 1, // blue
+    5./6., 1 , 1, // magenta
+    1, 1. , 1, // red
+    1, 0.5 , 1 // light red
+    ];
+//  real[int] viso(31);
+
+///Visu
+//u1x = u1x*(region==St)+0.*(region==Da);
+//u1y = u1y*(region==St)+0.*(region==Da);
+
+
+//u2x = u2x*(region==Da)+0.*(region==St);
+//u2y = u2y*(region==Da)+0.*(region==St);
+
+
+//p1 = p1*(region==St)+0.*(region==Da);
+//p2 = p2*(region==Da)+0.*(region==St);
+
+[ux,uy,p] = [0,0,0];
+[ux,uy,p] = [u1x+u2x,u1y+u2y,p1+p2];
+plot ([u1x, u1y],[u2x, u2y], coef = 0.6, value=1, cmm="Vitesse StokesDarcy",wait=1, hsv=colorhsv);
+[ux,uy,p] = [0,0,0];
+[ux,uy,p] = [u1xex+u2xex,u1yex+u2yex,p1ex+p2ex];
+plot ([ux, uy], coef = 0.6, value=1, cmm="Vitesse exact StokesDarcy ",wait=1, hsv=colorhsv);
+[ux,uy,p] = [0,0,0];
+[ux,uy,p] = [u1x+u2x,u1y+u2y,p2+p1];
+plot (p1,p2, nbiso = 10, fill=1, value=1, cmm="Pression StokesDarcy",wait=1);
+[ux,uy,p] = [0,0,0];
+[ux,uy,p] = [u1xex+u2xex,u1yex+u2yex,p1ex+p2ex];
+plot (p, nbiso = 10, fill=1, value=1, cmm="Pression StokesDarcy",wait=1);
+plot (u1x,u2x, nbiso = 10, fill=1, value=1, cmm="un exact StokesDarcy",wait=1);
+plot (ux, nbiso = 10, fill=1, value=1, cmm="un exact StokesDarcy",wait=1);
+//Tc=Dc;
+//plot(li,nbiso = 10, fill=1, value=1, cmm="Dc+Sc",wait=1);
+//
+//plot (ud1, nbiso = 10, fill=1, value=1, cmm="u1 ",wait=1);
+//plot (ud2, nbiso = 10, fill=1, value=1, cmm="u2 ",wait=1);
+//plot (normu, nbiso = 10, fill=1, value=1, cmm="Norme",wait=1);
+//plot (divu, nbiso = 50, fill=1, value=1, cmm="Divergence ",wait=1);
+
+
