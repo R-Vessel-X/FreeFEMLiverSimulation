@@ -1,0 +1,248 @@
+load "gmsh"
+load "msh3"
+load "medit"
+load "tetgen" 
+load "MUMPS"
+//load "UMFPACK64"
+load "iovtk"
+
+int nn=6375;  // should be equal to the line number of the files MESH, KeCi and G123, defining the multicompartment medium porous properties
+real[int] xx(nn),yy(nn),zz(nn),Pcl(46), Us(46);
+
+// // // // // // // Grid creation; MESH is the file containing the grid used in parametrization // // // // // // // // //
+ 
+{ ifstream file("../E3D/Parametrization/MESH");
+    //real xx,yy,zz;
+    for(int i=0;i<nn;i++)
+		 file >> xx[i] >> yy[i] >> zz[i];
+ }
+mesh3 Thxyz=tetgconvexhull(xx,yy,zz,region=1,label=3);
+
+
+
+// // // // // // // Parameters import: KeCi is the permeability tensor of the ith compartment;  G123 contains the coupling coefficients Gij // // // // // // // // // 
+fespace Vhxyz(Thxyz,P1);
+Vhxyz K11C1,K12C1,K13C1,K22C1,K23C1,K33C1; // 
+Vhxyz K11C2,K12C2,K13C2,K22C2,K23C2,K33C2;
+Vhxyz K11C3,K12C3,K13C3,K22C3,K23C3,K33C3;
+Vhxyz G12,G23;
+
+ { ifstream file("../E3D/Parametrization/KeC1");
+    real xx,yy,zz;
+    for(int i=0;i<nn;i++)
+		 file >> xx >> yy >> zz >> K11C1[][i] >> K12C1[][i]>> K13C1[][i]>> K22C1[][i]>> K23C1[][i]>> K33C1[][i];
+ }
+ 
+ //{ ifstream file("../E3D/Parametrization/KeC2");
+   // real xx,yy,zz;
+    //for(int i=0;i<nn;i++)
+//		 file >> xx >> yy >> zz >> K11C2[][i] >> K12C2[][i]>> K13C2[][i]>> K22C2[][i]>> K23C2[][i]>> K33C2[][i];
+ //}
+ 
+{ ifstream file("../E3D/Parametrization/KeC3");
+    real xx,yy,zz;
+    for(int i=0;i<nn;i++)
+		 file >> xx >> yy >> zz >> K11C3[][i] >> K12C3[][i]>> K13C3[][i]>> K22C3[][i]>> K23C3[][i]>> K33C3[][i];
+ }
+ 
+{ ifstream file("../E3D/Parametrization/G123");
+    real xx,yy,zz;
+    for(int i=0;i<nn;i++)
+		 file >> xx >> yy >> zz >> G12[][i] >> G23[][i];
+	 
+	 
+	 
+	 
+	 
+	 
+ }
+ 
+ // // // // // // // // // // Import liver mesh and define its finite element spaces // // // // // // // // 
+
+mesh3 Th=readmesh3("Liver_Mesh.mesh");
+plot(Th, wait=true, cmm="FESpace");
+
+fespace Vh(Th, P1);
+fespace Xh(Th, P2);
+
+
+// // // // // // // // // // Interpolate the model parameters in the mesh FE space: linear interpolation // // // // // // // // // 
+
+Vh K11I1=K11C1*1e6,K12I1=K12C1*1e6,K13I1=K13C1*1e6,K22I1=K22C1*1e6,K23I1=K23C1*1e6,K33I1=K33C1*1e6;
+//Vh K11I2=K11C2*1e6,K12I2=K12C2*1e6,K13I2=K13C2*1e6,K22I2=K22C2*1e6,K23I2=K23C2*1e6,K33I2=K33C2*1e6;
+Vh K11I3=K11C3*1e6,K12I3=K12C3*1e6,K13I3=K13C3*1e6,K22I3=K22C3*1e6,K23I3=K23C3*1e6,K33I3=K33C3*1e6;
+Vh B12=G12,B23=G23;
+
+//Vh K11I1=2.0,K12I1=0,K13I1=0,K22I1=2.0,K23I1=0,K33I1=2.0;
+Vh K11I2=8.4e-7,K12I2=0,K13I2=0,K22I2=8.4e-7,K23I2=0,K33I2=8.4e-7;
+//Vh K11I3=2.0,K12I3=0,K13I3=0,K22I3=2.0,K23I3=0,K33I3=2.0;
+//Vh B12=0.05,B23=0.05;
+
+Vh ume=x, vme=y, wme=z; //Liver Mesh grid 
+
+
+
+
+
+
+
+// // // // // // Mathematical operators // // // // // // // //
+macro grad(A) [dx(A), dy(A), dz(A)] //
+macro Grad(A) [grad(A#x), grad(A#y), grad(A#z)] //
+macro DIV(A1,A2,A3) (dx(A1)+dy(A2)+dz(A3)) //
+
+
+
+
+
+
+
+//  // // // // // // Define Multicompartment Problem // // // // // //
+
+Xh pD1,pD2,pD3,qD1,qD2,qD3; // here the pressure needs to be P2 to let the velocity be P1 in Darcy system
+
+problem DarcyM(pD1,pD2,pD3,qD1,qD2,qD3)
+	 = int3d(Th)( // The bilinear part
+	  ([[K11I1,K12I1,K13I1],[K12I1,K22I1,K23I1],[K13I1,K23I1,K33I1]]*grad(pD1))'*grad(qD1)
+	  +([[K11I2,K12I2,K13I2],[K12I2,K22I2,K23I2],[K13I2,K23I2,K33I2]]*grad(pD2))'*grad(qD2)
+	  +([[K11I3,K12I3,K13I3],[K12I3,K22I3,K23I3],[K13I3,K23I3,K33I3]]*grad(pD3))'*grad(qD3)
+	 )
+	 + int3d(Th)( 
+	  (B12*(pD1-pD2))*qD1+(B12*(pD2-pD1)+B23*(pD2-pD3))*qD2+(B23*(pD3-pD2))*qD3
+	 )
+	 //+int2d(Th,10662)(0.5*qD3)
+	 +on(10664, pD1=Pcl[21]) //B210
+	 +on(10665, pD1=Pcl[1]) //B12
+	 +on(10667, pD1=Pcl[17]) //B26
+	 +on(10668, pD1=Pcl[19]) //B28
+	 +on(10671, pD1=Pcl[23]) //B212
+	 +on(10672, pD1=Pcl[22]) //B211
+	 +on(10673, pD1=Pcl[24]) //B213
+	 +on(10675, pD1=Pcl[3]) //B14
+	 +on(10676, pD1=Pcl[5]) //B16
+	 +on(10677, pD1=Pcl[4]) //B15
+	 +on(10678, pD1=Pcl[10]) //B111
+	 +on(10680, pD1=Pcl[7]) //B18
+	 +on(10681, pD1=Pcl[6]) //B17
+	 +on(10682, pD1=Pcl[8]) //B19
+	 +on(10683, pD1=Pcl[0]) //B11
+	 +on(10684, pD1=Pcl[18]) //B27
+	 +on(10685, pD1=Pcl[12]) //B21
+	 +on(10686, pD1=Pcl[20]) //B29
+	 +on(10687, pD1=Pcl[16]) //B25
+	 +on(10689, pD1=Pcl[14]) //B23
+	 +on(10691, pD1=Pcl[15]) //B24
+	 +on(10693, pD1=Pcl[9]) //B110
+	 +on(10694, pD1=Pcl[11]) //B112
+	 +on(10699, pD1=Pcl[13]) //B22
+	 +on(10705, pD1=Pcl[2]) //B13
+	 
+	 +on(10662, pD3=Pcl[34]) //B25
+	 +on(10663, pD3=Pcl[25]) //B11
+	 +on(10666, pD3=Pcl[43]) //B41
+	 +on(10669, pD3=Pcl[45]) //B43
+	 +on(10670, pD3=Pcl[44]) //B42
+	 +on(10674, pD3=Pcl[28]) //B14
+	 +on(10679, pD3=Pcl[29]) //B15
+	 +on(10688, pD3=Pcl[42]) //B34
+	 +on(10690, pD3=Pcl[40]) //B32
+	 +on(10692, pD3=Pcl[41]) //B33
+	 +on(10695, pD3=Pcl[33]) //B24
+	 +on(10696, pD3=Pcl[36]) //B27
+	 +on(10697, pD3=Pcl[32]) //B23
+	 +on(10698, pD3=Pcl[37]) //B28
+	 +on(10700, pD3=Pcl[31]) //B22
+	 +on(10701, pD3=Pcl[30]) //B21
+	 +on(10702, pD3=Pcl[38]) //B29
+	 +on(10703, pD3=Pcl[26]) //B12
+	 +on(10704, pD3=Pcl[27]) //B13
+	 +on(10706, pD3=Pcl[35]) //B26
+	 +on(10707, pD3=Pcl[39]) //B31
+	 
+	  ;
+	  
+for (int i = 1; i < 46; i++) {
+        for (int j = 0; j < 46; j++) {
+            if (j == i) {
+                Pcl[j] = 1; // Set the current element to 1
+            } else {
+                Pcl[j] = 0; // Set other elements to 0
+            }
+        }
+	 DarcyM;
+
+// // // // // // // // // // // Compute velocities // // // // // // // //
+
+Vh uD11=-([K11I1,K12I1,K13I1]:grad(pD1)), uD12=-([K12I1,K22I1,K23I1]:grad(pD1)), uD13=-([K13I1,K23I1,K33I1]:grad(pD1));
+Vh uD21=-([K11I2,K12I2,K13I2]:grad(pD2)), uD22=-([K12I2,K22I2,K23I2]:grad(pD2)), uD23=-([K13I2,K23I2,K33I2]:grad(pD2));
+Vh uD31=-([K11I3,K12I3,K13I3]:grad(pD3)), uD32=-([K12I3,K22I3,K23I3]:grad(pD3)), uD33=-([K13I3,K23I3,K33I3]:grad(pD3));
+
+
+
+
+// // // // // // // // // // // // Compute Flux // // // // // // // // // //
+
+Us[34]=int2d(Th,10662)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10662)(1);
+Us[25]=int2d(Th,10663)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10663)(1);
+Us[43]=int2d(Th,10666)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10666)(1);
+Us[45]=int2d(Th,10669)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10669)(1);
+Us[44]=int2d(Th,10670)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10670)(1);
+Us[28]=int2d(Th,10674)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10674)(1);
+Us[29]=int2d(Th,10679)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10679)(1);
+Us[42]=int2d(Th,10688)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10688)(1);
+Us[40]=int2d(Th,10690)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10690)(1);
+Us[41]=int2d(Th,10692)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10692)(1);
+Us[33]=int2d(Th,10695)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10695)(1);
+Us[36]=int2d(Th,10696)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10696)(1);
+Us[32]=int2d(Th,10697)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10697)(1);
+Us[37]=int2d(Th,10698)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10698)(1);
+Us[31]=int2d(Th,10700)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10700)(1);
+Us[30]=int2d(Th,10701)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10701)(1);
+Us[38]=int2d(Th,10702)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10702)(1);
+Us[26]=int2d(Th,10703)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10703)(1);
+Us[27]=int2d(Th,10704)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10704)(1);
+Us[35]=int2d(Th,10706)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10706)(1);
+Us[39]=int2d(Th,10707)([uD31,uD32,uD33]'*[N.x,N.y,N.z])/int2d(Th,10707)(1);
+	 
+Us[21]=int2d(Th,10664)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10664)(1);
+Us[1]=int2d(Th,10665)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10665)(1);
+Us[17]=int2d(Th,10667)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10667)(1);
+Us[19]=int2d(Th,10668)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10668)(1);
+Us[23]=int2d(Th,10671)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10671)(1);
+Us[22]=int2d(Th,10672)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10672)(1);
+Us[24]=int2d(Th,10673)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10673)(1);
+Us[3]=int2d(Th,10675)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10675)(1);
+Us[5]=int2d(Th,10676)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10676)(1);
+Us[4]=int2d(Th,10677)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10677)(1);
+Us[10]=int2d(Th,10678)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10678)(1);
+Us[7]=int2d(Th,10680)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10680)(1);
+Us[6]=int2d(Th,10681)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10681)(1);
+Us[8]=int2d(Th,10682)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10682)(1);
+Us[0]=int2d(Th,10683)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10683)(1);
+Us[18]=int2d(Th,10684)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10684)(1);
+Us[12]=int2d(Th,10685)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10685)(1);
+Us[20]=int2d(Th,10686)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10686)(1);
+Us[16]=int2d(Th,10687)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10687)(1);
+Us[14]=int2d(Th,10689)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10689)(1);
+Us[15]=int2d(Th,10691)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10691)(1);
+Us[9]=int2d(Th,10693)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10693)(1);
+Us[11]=int2d(Th,10694)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10694)(1);
+Us[13]=int2d(Th,10699)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10699)(1);
+Us[2]=int2d(Th,10705)([uD11,uD12,uD13]'*[N.x,N.y,N.z])/int2d(Th,10705)(1);
+
+if (mpirank==0)
+{
+{// file for gnuplot
+ ofstream gnu("Darcy.txt", append);
+ gnu << Us[0] << " " << Us[1]  << " " << Us[2] << " " << Us[3] << " "<< Us[4] << " "<< Us[5] << " " << Us[6]  << " " << Us[7] << " " << Us[8] << " "<< Us[9] << " "<< Us[10] << " " << Us[11]  << " " << Us[12] << " " << Us[13] << " "<< Us[14] << " "<< Us[15] << " " << Us[16]  << " " << Us[17] << " " << Us[18] << " "<< Us[19] << " "<< Us[20] << " " << Us[21]  << " " << Us[22] << " " << Us[23] << " "<< Us[24] << " "<< Us[25] << " " << Us[26]  << " " << Us[27] << " " << Us[28] << " "<< Us[29] << " "<< Us[30] << " " << Us[31]  << " " << Us[32] << " " << Us[33] << " "<< Us[34] << " "<< Us[35] << " " << Us[36]  << " " << Us[37] << " " << Us[38] << " "<< Us[39] << " "<< Us[40] << " " << Us[41]  << " " << Us[42] << " " << Us[43] << " "<< Us[44] << " "<< Us[45] << endl;
+  }
+
+
+
+real DU1=int3d(Th)(DIV(uD11,uD12,uD13));
+real DU2=int3d(Th)(DIV(uD21,uD22,uD23));
+real DU3=int3d(Th)(DIV(uD31,uD32,uD33));
+
+cout << " DIVU1= " << DU1 << " DIVU2= " << DU2 << " DIVU3= " << DU3 << endl;
+}
+}
