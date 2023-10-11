@@ -57,12 +57,11 @@ Here's a more detailed explanation of the scientific and technical backgrounds, 
 
 *The script "Compute.py" couples the 1D and 3D tree blood circulations using continuity equations, Bernoulli equations, and the Darcy matrix obtained in the previous step.
 *To establish the coupling system, this script searches for the files containing 1D tree properties in the "E1D" directory and the "FE_model/Darcy.txt" file.
-*
+*The system is solved, and the outputs include pressure and velocity data for each 1D tree, which are saved in the "Final_1D_results" directory.
 
 
 
-4-The system is solved, and the outputs include pressure and velocity data for each 1D tree, which are saved in the "Final_1D_results" directory.
-Running the Final Simulation:
+4-Running the Final Simulation:
 
 *Before executing the script "FE_model/Final_simulation.edp," ensure that each boundary condition is accurately defined.
 *Boundary conditions are set at the terminal nodes of the 1D trees, which are identified by external surfaces in the Liver mesh. Each surface is assigned an index.
